@@ -1,5 +1,6 @@
 # Rust / Zed extension build artifacts
 /target
+server/target
 *.wasm
 grammars/
 

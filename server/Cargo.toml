@@ -1,0 +1,19 @@
+[package]
+name = "elasticsearch-language-server"
+version = "0.0.1"
+edition = "2021"
+description = "Language server for Elasticsearch Console (.es) files"
+license = "Apache-2.0"
+
+# This is a binary crate: it compiles to an executable that Zed launches and
+# talks to over stdin/stdout using the Language Server Protocol (LSP).
+[[bin]]
+name = "elasticsearch-language-server"
+path = "src/main.rs"
+
+[dependencies]
+# tower-lsp implements the LSP plumbing (JSON-RPC framing over stdio, request
+# dispatch). We implement its `LanguageServer` trait; it calls our methods.
+tower-lsp = "0.20.0"
+# tokio is the async runtime that actually drives tower-lsp's async tasks.
+tokio = { version = "1", features = ["full"] }
