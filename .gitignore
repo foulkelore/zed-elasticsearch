@@ -1,0 +1,7 @@
+# Rust / Zed extension build artifacts
+/target
+*.wasm
+grammars/
+
+# macOS
+.DS_Store

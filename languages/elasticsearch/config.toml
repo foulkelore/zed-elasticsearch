@@ -1,0 +1,14 @@
+name = "Elasticsearch"
+grammar = "elasticsearch"
+path_suffixes = ["es"]
+# Only `#` is used for the cmd-/ comment toggle (Elasticsearch/Kibana's native
+# comment style). The grammar still highlights `//` comments too (see the
+# `comment` rule), but `line_comments` controls the toggle keybind only, so we
+# list just `#` here to make toggling deterministic.
+line_comments = ["# "]
+autoclose_before = ",]}"
+brackets = [
+  { start = "{", end = "}", close = true, newline = true },
+  { start = "[", end = "]", close = true, newline = true },
+  { start = "\"", end = "\"", close = true, newline = false, not_in = ["string", "comment"] },
+]
