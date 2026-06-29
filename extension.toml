@@ -7,7 +7,5 @@ description = "Syntax highlighting for Elasticsearch Console (.es) request files
 repository = "https://github.com/foulkelore/zed-elasticsearch"
 
 [grammars.elasticsearch]
-# During local development we load the grammar from the local filesystem.
-# Before publishing, this is replaced with a GitHub `repository` URL + `rev` (commit SHA).
-repository = "file:///Users/TXI4N9D/code/foulkelore/Zed/tree-sitter-elasticsearch"
-rev = "508d0135011036740d4a37e70785a038dd1ca112"
+repository = "https://github.com/foulkelore/tree-sitter-elasticsearch"
+rev = "2194e3859d01cdd50b9585b92e5f15904f105f11"

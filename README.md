@@ -10,10 +10,10 @@ Kibana Dev Tools.
   - HTTP methods (`GET`, `POST`, `PUT`, `DELETE`, `HEAD`, `PATCH`)
   - Request paths and query parameters
   - `#` and `//` line comments
-- JSON request bodies are highlighted using Zed's built-in JSON support
-  (via Tree-sitter language injection)
+- JSON request bodies are parsed and highlighted by the extension's own
+  grammar (object keys, string values, numbers, booleans, null, and brackets)
 - Bracket matching and auto-closing inside bodies
-- Comment toggling with `cmd-/`
+- Comment toggling with `cmd-/` inserts `#` everywhere, including inside bodies
 
 ## Example
 
