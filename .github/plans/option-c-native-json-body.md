@@ -125,5 +125,5 @@ everywhere.
 - [x] Add `indents.scm` body indent rules
 - [x] Validate all `.scm` via `tree-sitter query`
 - [x] Bump `extension.toml` grammar `rev`
-- [ ] Reinstall dev extension; verify `#` toggling in body + highlighting
-- [ ] Commit extension repo
+- [x] Reinstall dev extension; verify `#` toggling in body + highlighting
+- [x] Commit extension repo
