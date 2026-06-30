@@ -1,0 +1,15 @@
+[package]
+name = "zed_elasticsearch"
+version = "0.0.1"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+
+# A Zed extension is compiled to WebAssembly. `cdylib` produces a dynamic
+# library that Zed loads as a WASM component; `register_extension!` in lib.rs
+# exposes our `Extension` impl to the host.
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+zed_extension_api = "0.7.0"

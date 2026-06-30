@@ -179,13 +179,13 @@ staying local, so instead:
 - [x] Scripted stdio handshake returns an `initialize` result (no Zed)
 
 ### Slice 1 — diagnostic logic (TDD)
-- [ ] `analysis.rs`: failing test for `FOO` request line (RED)
-- [ ] Implement `analyze` to green (GREEN)
-- [ ] Edge-case tests: comments ignored, blank lines, method-only line, lowercase
-- [ ] `cargo test` in `server/` all green
+- [x] `analysis.rs`: failing test for `FOO` request line (RED)
+- [x] Implement `analyze` to green (GREEN)
+- [x] Edge-case tests: comments ignored, blank lines, method-only line, lowercase
+- [x] `cargo test` in `server/` all green
 
 ### Slice 2 — wire into Zed
-- [ ] Server publishes diagnostics on didOpen/didChange
+- [x] Server publishes diagnostics on didOpen/didChange
 - [ ] Extension crate: `Cargo.toml` + `src/lib.rs` (`language_server_command`)
 - [ ] `extension.toml`: `[language_servers.*]` entry
 - [ ] Build server; reinstall dev extension
