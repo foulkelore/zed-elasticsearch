@@ -1,0 +1,114 @@
+# Builds the Elasticsearch language server for every platform Zed runs on and
+# attaches the binaries to a GitHub Release. The Zed extension (src/lib.rs)
+# downloads the matching asset at install time, so the asset names here are a
+# contract: lib.rs constructs the download URL from these exact strings.
+#
+# Trigger: pushing a tag like `server-v0.1.0`. The `server-` prefix namespaces
+# server releases away from any future extension-only tags in this co-located
+# repo. Manual runs (workflow_dispatch) build the matrix without publishing,
+# which is handy for testing the pipeline before cutting a real tag.
+name: Release language server
+
+on:
+  push:
+    tags:
+      - "server-v*"
+  workflow_dispatch:
+
+# The release job needs to create a GitHub Release and upload assets to it.
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      # Don't cancel the other platforms if one fails — we want to see every
+      # platform's result in a single run rather than stopping at the first.
+      fail-fast: false
+      matrix:
+        include:
+          # Native runners for each target avoid cross-compilation toolchains:
+          # each binary is built on hardware matching its architecture.
+          - runner: macos-14 # Apple Silicon
+            target: aarch64-apple-darwin
+          - runner: macos-15-intel # Intel Mac
+            target: x86_64-apple-darwin
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # Caches the cargo registry and target dir keyed on the lockfile, so
+      # repeat runs only recompile what changed.
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server
+
+      - name: Build release binary
+        working-directory: server
+        # --locked fails the build if Cargo.lock is out of date, guaranteeing the
+        # released binary matches the committed dependency versions exactly.
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      # Unix: tar.gz the bare binary. -C cds into the output dir so the archive
+      # contains just `elasticsearch-language-server` with no nested paths.
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        working-directory: server
+        run: |
+          asset="elasticsearch-language-server-${{ matrix.target }}.tar.gz"
+          tar -czf "$asset" -C "target/${{ matrix.target }}/release" elasticsearch-language-server
+          echo "ASSET=$asset" >> "$GITHUB_ENV"
+
+      # Windows: zip the .exe. Compress-Archive is built into PowerShell, so no
+      # extra tooling is needed on the runner.
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        working-directory: server
+        shell: pwsh
+        run: |
+          $asset = "elasticsearch-language-server-${{ matrix.target }}.zip"
+          Compress-Archive -Path "target/${{ matrix.target }}/release/elasticsearch-language-server.exe" -DestinationPath $asset
+          "ASSET=$asset" >> $env:GITHUB_ENV
+
+      # Hand the packaged archive to the release job. Each platform uploads under
+      # a distinct name so the download-artifact step can collect them all.
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: server/${{ env.ASSET }}
+          if-no-files-found: error
+
+  release:
+    name: publish release
+    needs: build
+    runs-on: ubuntu-latest
+    # Only publish for real tag pushes. A manual workflow_dispatch run still
+    # builds and uploads artifacts above, but skips creating a public release.
+    if: startsWith(github.ref, 'refs/tags/server-v')
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          # Flatten every platform's archive into one directory for upload.
+          merge-multiple: true
+
+      - name: Publish to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          fail_on_unmatched_files: true
