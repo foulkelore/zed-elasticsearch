@@ -216,4 +216,4 @@ staying local, so instead:
 - [x] One diagnostic per malformed line, mapped to its document line
 - [x] Option A only (no action/source pairing semantics yet)
 - [x] `cargo test` all green (23); clippy clean
-- [ ] Visual QA in Zed: malformed bulk line squiggles; valid bulk does not
+- [x] Visual QA in Zed: malformed bulk line squiggles; valid bulk does not
