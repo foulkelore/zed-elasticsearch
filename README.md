@@ -4,6 +4,16 @@ A [Zed](https://zed.dev) extension that adds language support for Elasticsearch
 Console / Dev Tools files (the `.es` format) — the same request format you use in
 Kibana Dev Tools.
 
+> **Scope:** this extension understands the **Console request file format**
+> (HTTP method + path + JSON body, like Kibana Dev Tools). It is an editor
+> language extension — it does **not** connect to a cluster, run requests, or
+> implement the full Query DSL.
+>
+> **Unofficial:** this is a community project and is **not affiliated with,
+> endorsed by, or sponsored by Elastic N.V.** "Elasticsearch" and "Kibana" are
+> trademarks of Elastic N.V., used here only to describe what the extension
+> supports.
+
 ## Features
 
 - Syntax highlighting for Elasticsearch requests:
@@ -72,3 +82,10 @@ falls back to `elasticsearch-language-server` on your `$PATH`.
 ## License
 
 Apache License 2.0. See [LICENSE](LICENSE).
+
+## Trademarks
+
+"Elasticsearch" and "Kibana" are trademarks of Elastic N.V. This project is an
+independent, community-maintained extension and is not affiliated with or
+endorsed by Elastic N.V. The names are used solely to identify the file format
+and tooling this extension supports.
