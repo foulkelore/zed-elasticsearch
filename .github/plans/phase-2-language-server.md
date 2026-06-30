@@ -199,4 +199,4 @@ staying local, so instead:
 - [x] Map serde_json error line/column to absolute document position
 - [x] Skip empty bodies and NDJSON endpoints (`_bulk`, `_msearch`)
 - [x] `cargo test` all green (13); clippy clean
-- [ ] Visual QA in Zed: malformed body squiggles; valid body / `_bulk` do not
+- [x] Visual QA in Zed: malformed body squiggles; valid body / `_bulk` do not
