@@ -112,3 +112,7 @@ jobs:
         with:
           files: artifacts/*
           fail_on_unmatched_files: true
+          # Flag tags containing a hyphen (e.g. server-v0.1.0-rc.1) as
+          # pre-releases. Final tags like server-v0.1.0 have no hyphen in the
+          # version, so they publish as full releases.
+          prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha') }}
