@@ -115,9 +115,15 @@ pub fn analyze(text: &str) -> Vec<Lint> {
             body_end += 1;
         }
 
-        // Validate the body as JSON unless it is empty or an NDJSON endpoint.
-        if body_end > body_start && !is_ndjson_path(path) {
-            if let Some(lint) = validate_json_body(&lines[body_start..body_end], body_start as u32) {
+        // Validate the body. Two shapes:
+        // - NDJSON endpoints (_bulk, _msearch): each non-blank line is its own
+        //   JSON value, validated independently.
+        // - everything else: the whole body is a single JSON document.
+        if body_end > body_start {
+            let body = &lines[body_start..body_end];
+            if is_ndjson_path(path) {
+                lints.extend(validate_ndjson_body(body, body_start as u32));
+            } else if let Some(lint) = validate_json_body(body, body_start as u32) {
                 lints.push(lint);
             }
         }
@@ -145,6 +151,27 @@ fn looks_like_request_line(line: &str) -> bool {
     let token_len = rest.find(|c: char| c.is_whitespace()).unwrap_or(rest.len());
     let token = &rest[..token_len];
     is_request_candidate(token)
+}
+
+/// Validate an NDJSON body (`_bulk` / `_msearch`): each non-blank line must be a
+/// valid JSON value on its own. Returns one lint per malformed line.
+///
+/// `body_start_line` is the document line index (0-based) of `body_lines[0]`.
+/// We deliberately do not enforce bulk action/source pairing here (Option A);
+/// that semantic layer can come later.
+fn validate_ndjson_body(body_lines: &[&str], body_start_line: u32) -> Vec<Lint> {
+    let mut lints = Vec::new();
+    for (offset, line) in body_lines.iter().enumerate() {
+        if line.trim().is_empty() {
+            continue; // tolerate blank lines within the body
+        }
+        let abs_line = body_start_line + offset as u32;
+        // A single line is itself a one-line body, so reuse the same validator.
+        if let Some(lint) = validate_json_body(&[*line], abs_line) {
+            lints.push(lint);
+        }
+    }
+    lints
 }
 
 /// Validate `body_lines` (the lines of a single request body) as one JSON value.
@@ -308,13 +335,13 @@ mod tests {
     }
 
     #[test]
-    fn skips_bulk_bodies_to_avoid_false_positives() {
-        // _bulk bodies are NDJSON (multiple objects, one per line), which is not
-        // a single valid JSON document. We defer NDJSON validation, so this must
-        // NOT be flagged.
+    fn accepts_valid_bulk_body_line_by_line() {
+        // _bulk bodies are NDJSON: multiple JSON values, one per line. A body
+        // where every line is valid JSON must not be flagged (each line is
+        // validated independently rather than as one document).
         let doc = "POST /_bulk\n{ \"index\": {} }\n{ \"field\": 1 }";
         let lints = analyze(doc);
-        assert!(lints.is_empty(), "bulk NDJSON body must not be flagged, got: {lints:?}");
+        assert!(lints.is_empty(), "valid bulk body must not be flagged, got: {lints:?}");
     }
 
     #[test]
@@ -398,6 +425,52 @@ mod tests {
         assert!(
             lints.is_empty(),
             "valid body with letter-led lines must not be flagged, got: {lints:?}"
+        );
+    }
+
+    // --- Per-line bulk / msearch validation (Slice 5) ---------------------
+
+    #[test]
+    fn flags_one_malformed_line_in_bulk_body() {
+        // Second body line is malformed JSON; it should be flagged on its line.
+        let doc = "POST /_bulk\n{ \"index\": {} }\n{ \"oops\" }\n{ \"ok\": 1 }";
+        let lints = analyze(doc);
+        assert_eq!(lints.len(), 1, "one malformed bulk line expected, got: {lints:?}");
+        assert_eq!(lints[0].range.start.line, 2, "lint should be on the bad line (2)");
+        assert!(lints[0].message.to_lowercase().contains("json"));
+    }
+
+    #[test]
+    fn flags_each_malformed_line_in_bulk_body() {
+        // Two bad lines -> two diagnostics, one per offending line.
+        let doc = "POST /_bulk\n{ \"bad\" }\n{ \"ok\": 1 }\n{ \"alsobad\" }";
+        let lints = analyze(doc);
+        assert_eq!(lints.len(), 2, "two malformed bulk lines expected, got: {lints:?}");
+        assert_eq!(lints[0].range.start.line, 1);
+        assert_eq!(lints[1].range.start.line, 3);
+    }
+
+    #[test]
+    fn validates_msearch_body_line_by_line() {
+        // _msearch is also NDJSON; a malformed line is flagged.
+        let doc = "GET /_msearch\n{}\n{ \"query\": }";
+        let lints = analyze(doc);
+        assert_eq!(lints.len(), 1, "one malformed msearch line expected, got: {lints:?}");
+        assert_eq!(lints[0].range.start.line, 2);
+    }
+
+    #[test]
+    fn bulk_error_column_is_offset_within_its_line() {
+        // The error position should be within the offending line, not column 0,
+        // so the squiggle lands on the actual problem.
+        let doc = "POST /_bulk\n{ \"index\": {} }\n{ \"k\": }";
+        let lints = analyze(doc);
+        assert_eq!(lints.len(), 1, "one lint expected, got: {lints:?}");
+        assert_eq!(lints[0].range.start.line, 2);
+        assert!(
+            lints[0].range.start.character > 0,
+            "error column should be within the line, got {}",
+            lints[0].range.start.character
         );
     }
 }
