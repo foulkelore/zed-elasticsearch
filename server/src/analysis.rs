@@ -210,13 +210,17 @@ fn validate_ndjson_body(body_lines: &[&str], body_start_line: u32) -> Vec<Lint> 
 /// Validate `body_lines` (the lines of a single request body) as one JSON value.
 /// Returns a `Lint` positioned at the parse error, or `None` if the body parses.
 ///
+/// We deserialize into [`DupKeyCheck`] rather than `serde_json::Value` so that a
+/// single pass catches BOTH malformed JSON (syntax errors) AND duplicate object
+/// keys — `Value` silently collapses duplicates, hiding the bug.
+///
 /// `body_start_line` is the document line index (0-based) of `body_lines[0]`, so
 /// we can translate serde_json's body-relative error position back to the
 /// document's absolute coordinates.
 fn validate_json_body(body_lines: &[&str], body_start_line: u32) -> Option<Lint> {
     let body_text = body_lines.join("\n");
 
-    match serde_json::from_str::<serde_json::Value>(&body_text) {
+    match serde_json::from_str::<DupKeyCheck>(&body_text) {
         Ok(_) => None,
         Err(err) => {
             // serde_json reports 1-based line and BYTE column within `body_text`.
@@ -230,8 +234,15 @@ fn validate_json_body(body_lines: &[&str], body_start_line: u32) -> Option<Lint>
                 .unwrap_or("");
             let err_col = byte_to_utf16_col(err_line_text, byte_col);
             let doc_line = body_start_line + err_line_in_body;
+            // A duplicate key is a *data* error (the JSON is syntactically fine);
+            // everything else from our deserializer is a *syntax* error. Word the
+            // message to match so the squiggle reads correctly.
+            let message = match err.classify() {
+                serde_json::error::Category::Data => format!("Request body has a {err}"),
+                _ => format!("Invalid JSON in request body: {err}"),
+            };
             Some(Lint {
-                message: format!("Invalid JSON in request body: {err}"),
+                message,
                 range: Range {
                     start: Position { line: doc_line, character: err_col },
                     end: Position { line: doc_line, character: err_col + 1 },
@@ -239,6 +250,72 @@ fn validate_json_body(body_lines: &[&str], body_start_line: u32) -> Option<Lint>
             })
         }
     }
+}
+
+/// A "recognizer" we deserialize JSON into purely for validation — we discard
+/// the data and keep only the side effect of erroring on a duplicate object key.
+///
+/// `serde_json::Value` cannot do this: its object is a map, so a repeated key
+/// just overwrites the previous entry. By hand-writing a [`Visitor`] we get to
+/// observe keys *as they are parsed* and reject the second occurrence, with
+/// serde_json attaching the precise line/column for us.
+struct DupKeyCheck;
+
+impl<'de> serde::Deserialize<'de> for DupKeyCheck {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        // `deserialize_any` lets the JSON shape (object/array/scalar) pick which
+        // visitor method runs, since a body can be any JSON value.
+        deserializer.deserialize_any(DupKeyVisitor)
+    }
+}
+
+struct DupKeyVisitor;
+
+impl<'de> serde::de::Visitor<'de> for DupKeyVisitor {
+    type Value = DupKeyCheck;
+
+    fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str("any JSON value")
+    }
+
+    // Objects: track keys we've seen; the second occurrence is the error. We
+    // recurse into each value (`DupKeyCheck` again) so nested objects are also
+    // checked.
+    fn visit_map<A>(self, mut map: A) -> std::result::Result<Self::Value, A::Error>
+    where
+        A: serde::de::MapAccess<'de>,
+    {
+        let mut seen = std::collections::HashSet::new();
+        while let Some(key) = map.next_key::<String>()? {
+            if !seen.insert(key.clone()) {
+                return Err(serde::de::Error::custom(format!("duplicate key `{key}`")));
+            }
+            map.next_value::<DupKeyCheck>()?;
+        }
+        Ok(DupKeyCheck)
+    }
+
+    // Arrays: recurse into each element so duplicates inside array items count.
+    fn visit_seq<A>(self, mut seq: A) -> std::result::Result<Self::Value, A::Error>
+    where
+        A: serde::de::SeqAccess<'de>,
+    {
+        while seq.next_element::<DupKeyCheck>()?.is_some() {}
+        Ok(DupKeyCheck)
+    }
+
+    // Scalars carry no keys, so they always pass. serde forwards owned/borrowed
+    // string and i128/u128 variants to these by default.
+    fn visit_bool<E>(self, _: bool) -> std::result::Result<Self::Value, E> { Ok(DupKeyCheck) }
+    fn visit_i64<E>(self, _: i64) -> std::result::Result<Self::Value, E> { Ok(DupKeyCheck) }
+    fn visit_u64<E>(self, _: u64) -> std::result::Result<Self::Value, E> { Ok(DupKeyCheck) }
+    fn visit_f64<E>(self, _: f64) -> std::result::Result<Self::Value, E> { Ok(DupKeyCheck) }
+    fn visit_str<E>(self, _: &str) -> std::result::Result<Self::Value, E> { Ok(DupKeyCheck) }
+    fn visit_none<E>(self) -> std::result::Result<Self::Value, E> { Ok(DupKeyCheck) }
+    fn visit_unit<E>(self) -> std::result::Result<Self::Value, E> { Ok(DupKeyCheck) }
 }
 
 /// Decide whether a line's first token marks it as an HTTP request line.
@@ -556,5 +633,65 @@ mod tests {
             lints[0].range.start.character, 8,
             "a surrogate pair counts as 2 UTF-16 units; expected character 8"
         );
+    }
+
+    // --- Duplicate object keys (Slice 7) ----------------------------------
+    // serde_json::Value silently keeps only the last of duplicate keys, which
+    // hides a real Elasticsearch footgun (e.g. two `size` keys -> one wins). A
+    // custom deserializer flags the duplicate instead.
+
+    #[test]
+    fn flags_duplicate_key_in_body() {
+        let doc = "POST /_search\n{ \"size\": 10, \"size\": 20 }";
+        let lints = analyze(doc);
+        assert_eq!(lints.len(), 1, "one duplicate-key lint expected, got: {lints:?}");
+        assert_eq!(lints[0].range.start.line, 1, "lint should be on the body line");
+        assert!(
+            lints[0].message.to_lowercase().contains("duplicate")
+                && lints[0].message.contains("size"),
+            "message should name the duplicated key, got: {}",
+            lints[0].message
+        );
+    }
+
+    #[test]
+    fn flags_nested_duplicate_key() {
+        // Duplicate inside a nested object must also be caught, on its own line.
+        let doc = "POST /_search\n{\n  \"query\": {\n    \"x\": 1,\n    \"x\": 2\n  }\n}";
+        let lints = analyze(doc);
+        assert_eq!(lints.len(), 1, "one nested duplicate-key lint expected, got: {lints:?}");
+        assert_eq!(lints[0].range.start.line, 4, "lint should point at the second `x`");
+        assert!(lints[0].message.to_lowercase().contains("duplicate"));
+    }
+
+    #[test]
+    fn accepts_unique_keys() {
+        // A body whose keys are all distinct must not be flagged.
+        let doc = "POST /_search\n{ \"size\": 10, \"from\": 0 }";
+        let lints = analyze(doc);
+        assert!(lints.is_empty(), "unique keys should produce no lints, got: {lints:?}");
+    }
+
+    #[test]
+    fn duplicate_key_does_not_break_malformed_detection() {
+        // The duplicate-aware validator must still flag plain syntax errors.
+        let doc = "POST /_search\n{ \"bad\": }";
+        let lints = analyze(doc);
+        assert_eq!(lints.len(), 1, "malformed body should still be flagged, got: {lints:?}");
+        assert!(
+            lints[0].message.to_lowercase().contains("json"),
+            "syntax errors should still read as invalid JSON, got: {}",
+            lints[0].message
+        );
+    }
+
+    #[test]
+    fn flags_duplicate_key_in_bulk_line() {
+        // _bulk validates each line; a line with duplicate keys is flagged there.
+        let doc = "POST /_bulk\n{ \"index\": {} }\n{ \"a\": 1, \"a\": 2 }";
+        let lints = analyze(doc);
+        assert_eq!(lints.len(), 1, "one duplicate-key lint expected, got: {lints:?}");
+        assert_eq!(lints[0].range.start.line, 2, "lint should be on the offending bulk line");
+        assert!(lints[0].message.to_lowercase().contains("duplicate"));
     }
 }
