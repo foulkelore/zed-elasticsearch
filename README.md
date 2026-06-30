@@ -50,6 +50,25 @@ The Tree-sitter grammar lives in a separate repository,
 `tree-sitter-elasticsearch`. During local development the grammar is loaded from
 the local filesystem (see the `file://` URL in `extension.toml`).
 
+### Language server (Phase 2)
+
+The extension launches a native language server for diagnostics. Build it and
+make the extension find it one of two ways:
+
+```sh
+# Build the debug binary
+cargo build --manifest-path server/Cargo.toml
+
+# Option A: point the extension at the build via an env var (in your shell rc)
+export ELASTICSEARCH_LS_BINARY="$PWD/server/target/debug/elasticsearch-language-server"
+
+# Option B: install it onto your PATH instead (no env var needed)
+cargo install --path server
+```
+
+The extension resolves the binary from `ELASTICSEARCH_LS_BINARY` first, then
+falls back to `elasticsearch-language-server` on your `$PATH`.
+
 ## License
 
 Apache License 2.0. See [LICENSE](LICENSE).

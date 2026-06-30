@@ -6,3 +6,6 @@ grammars/
 
 # macOS
 .DS_Store
+
+# Github
+.github/plans

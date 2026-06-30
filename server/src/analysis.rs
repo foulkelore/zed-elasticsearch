@@ -29,7 +29,12 @@ pub struct Lint {
 }
 
 /// The HTTP methods Elasticsearch / Kibana Dev Tools accept on a request line.
-const VALID_METHODS: [&str; 7] = ["GET", "POST", "PUT", "DELETE", "HEAD", "PATCH", "OPTIONS"];
+///
+/// This list MUST stay in sync with the `method` rule in the grammar
+/// (`tree-sitter-elasticsearch/grammar.js`). If the two disagree, a request can
+/// be "valid" to this server (no squiggle) yet fail to parse in the grammar
+/// (broken highlighting), or vice versa.
+const VALID_METHODS: [&str; 6] = ["GET", "POST", "PUT", "DELETE", "HEAD", "PATCH"];
 
 /// Path fragments whose request bodies are NDJSON (one JSON value per line),
 /// not a single JSON document. We skip JSON validation for these to avoid
@@ -291,6 +296,18 @@ mod tests {
         assert_eq!(lints[0].range.start.line, 3, "lint should be on line 3");
         assert_eq!(lints[0].range.start.character, 0);
         assert_eq!(lints[0].range.end.character, 3);
+    }
+
+    #[test]
+    fn valid_methods_match_grammar() {
+        // Guard against drift: this list must equal the `method` rule in
+        // tree-sitter-elasticsearch/grammar.js. If you add a method to one,
+        // add it to the other (and a corpus test) in the same change.
+        assert_eq!(
+            VALID_METHODS,
+            ["GET", "POST", "PUT", "DELETE", "HEAD", "PATCH"],
+            "VALID_METHODS drifted from the grammar's `method` rule"
+        );
     }
 
     // --- JSON body validation (Slice 3) -----------------------------------

@@ -11,23 +11,63 @@
 use zed_extension_api::{self as zed, LanguageServerId, Result};
 
 // ---------------------------------------------------------------------------
-// DEV-ONLY: absolute path to the locally-built server binary.
+// Locating the server binary in local development.
 //
-// Why absolute? When Zed runs an extension, the extension's working directory
-// is its own installed copy (sandboxed), NOT this source repo. So a relative
-// path like "server/target/debug/..." would not resolve to our build output.
+// A Zed extension runs from its own sandboxed install directory, NOT this
+// source repo, so a relative path to our build output would not resolve. We
+// also do not want a machine-specific absolute path baked into committed
+// source. So we resolve the binary at runtime, in priority order:
 //
-// This mirrors the local `file://` grammar path in extension.toml: it is kept
-// local and never published. For a release we would download or bundle a
-// prebuilt server binary instead (out of scope for now).
+//   1. The `ELASTICSEARCH_LS_BINARY` environment variable, if set. This is the
+//      escape hatch: point it at `server/target/debug/elasticsearch-language-server`
+//      (or a release build) for local development.
+//   2. `elasticsearch-language-server` found on the worktree's `$PATH` (e.g.
+//      after `cargo install --path server`, or a symlink into `~/.cargo/bin`).
 //
-// If you move the repo, update this path (and rebuild the server with
-// `cargo build` inside `server/`).
+// If neither resolves, we return an error explaining how to fix it instead of
+// failing with an opaque "binary not found".
+//
+// For a published release we would download or bundle a prebuilt binary; that
+// is out of scope here (mirrors the local `file://` grammar decision).
 // ---------------------------------------------------------------------------
-const DEV_SERVER_BINARY: &str =
-    "/Users/TXI4N9D/code/foulkelore/Zed/elasticsearch/server/target/debug/elasticsearch-language-server";
+
+/// Environment variable a developer can set to point at a locally-built server.
+const SERVER_BINARY_ENV: &str = "ELASTICSEARCH_LS_BINARY";
+
+/// The binary name to look for on `$PATH` when the env var is not set.
+const SERVER_BINARY_NAME: &str = "elasticsearch-language-server";
 
 struct ElasticsearchExtension;
+
+impl ElasticsearchExtension {
+    /// Resolve the path to the language server binary, or explain why we could
+    /// not. See the module comment above for the resolution order.
+    fn server_binary_path(worktree: &zed::Worktree) -> Result<String> {
+        // 1. Explicit override via environment variable.
+        if let Some((_, path)) = worktree
+            .shell_env()
+            .into_iter()
+            .find(|(key, _)| key == SERVER_BINARY_ENV)
+        {
+            if !path.is_empty() {
+                return Ok(path);
+            }
+        }
+
+        // 2. Discover the binary on the worktree's `$PATH`.
+        if let Some(path) = worktree.which(SERVER_BINARY_NAME) {
+            return Ok(path);
+        }
+
+        Err(format!(
+            "could not find the Elasticsearch language server. \
+             Set `{SERVER_BINARY_ENV}` to the built binary \
+             (e.g. server/target/debug/{SERVER_BINARY_NAME}), \
+             or put `{SERVER_BINARY_NAME}` on your PATH \
+             (e.g. `cargo install --path server`)."
+        ))
+    }
+}
 
 impl zed::Extension for ElasticsearchExtension {
     fn new() -> Self {
@@ -37,10 +77,10 @@ impl zed::Extension for ElasticsearchExtension {
     fn language_server_command(
         &mut self,
         _language_server_id: &LanguageServerId,
-        _worktree: &zed::Worktree,
+        worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
         Ok(zed::Command {
-            command: DEV_SERVER_BINARY.to_string(),
+            command: Self::server_binary_path(worktree)?,
             args: Vec::new(),
             env: Default::default(),
         })
