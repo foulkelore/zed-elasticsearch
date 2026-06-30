@@ -76,6 +76,7 @@ dependencies = [
 name = "elasticsearch-language-server"
 version = "0.0.1"
 dependencies = [
+ "serde_json",
  "tokio",
  "tower-lsp",
 ]

@@ -17,3 +17,6 @@ path = "src/main.rs"
 tower-lsp = "0.20.0"
 # tokio is the async runtime that actually drives tower-lsp's async tasks.
 tokio = { version = "1", features = ["full"] }
+# serde_json parses request bodies so we can flag malformed JSON. Already in the
+# tree via tower-lsp; declaring it directly lets the analysis module use it.
+serde_json = "1"
