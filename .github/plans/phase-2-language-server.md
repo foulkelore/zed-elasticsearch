@@ -200,3 +200,12 @@ staying local, so instead:
 - [x] Skip empty bodies and NDJSON endpoints (`_bulk`, `_msearch`)
 - [x] `cargo test` all green (13); clippy clean
 - [x] Visual QA in Zed: malformed body squiggles; valid body / `_bulk` do not
+
+### Slice 4 — missing path diagnostic (TDD)
+- [x] Tests: lone method, trailing whitespace, precedence, multi-line (RED)
+- [x] Broaden request detection (`is_request_candidate`); path no longer required
+- [x] Missing-path lint when method is valid but no path follows
+- [x] One-diagnostic-per-line precedence: bad method wins over missing path
+- [x] Guard: valid JSON body lines are not misread as requests
+- [x] `cargo test` all green (19); clippy clean
+- [ ] Visual QA in Zed: lone `GET` squiggles; complete request does not
