@@ -38,8 +38,9 @@ const NDJSON_PATH_MARKERS: [&str; 2] = ["_bulk", "_msearch"];
 
 /// Analyze document text and return all lints found.
 ///
-/// Currently detects two kinds of problem:
+/// Currently detects:
 /// - a request line whose first token is not a valid HTTP method;
+/// - a request line with a valid method but no path;
 /// - a request body that is not valid JSON (single-object bodies only).
 pub fn analyze(text: &str) -> Vec<Lint> {
     let mut lints = Vec::new();
@@ -68,34 +69,42 @@ pub fn analyze(text: &str) -> Vec<Lint> {
             .unwrap_or(rest.len());
         let token = &rest[..token_len];
 
-        // Only HTTP request lines are processed. A request line looks like
-        // `WORD /path...`: an all-letters first token followed by whitespace
-        // and then a `/`. This skips JSON body lines (`{`, `"`, `}`), comments
-        // (`#`, `//`), and anything else that is not a request.
-        if !is_request_line(token, rest, token_len) {
+        // Only HTTP request lines are processed. A request line begins with an
+        // all-letters token (the method). This skips JSON body lines (`{`, `"`,
+        // `}`), comments (`#`, `//`), and anything else that is not a request.
+        if !is_request_candidate(token) {
             i += 1;
             continue;
         }
 
-        // Check the method itself.
+        // The path is whatever follows the method token on the line.
+        let path = rest[token_len..].trim_start();
+        let start_char = start_col as u32;
+        let end_char = (start_col + token_len) as u32;
+        let method_range = Range {
+            start: Position { line: line_number, character: start_char },
+            end: Position { line: line_number, character: end_char },
+        };
+
+        // One diagnostic per request line, in precedence order: an invalid
+        // method wins over a missing path.
         if !VALID_METHODS.contains(&token) {
-            let start_char = start_col as u32;
-            let end_char = (start_col + token_len) as u32;
             lints.push(Lint {
                 message: format!(
                     "`{token}` is not a valid HTTP method. Expected one of: {}.",
                     VALID_METHODS.join(", ")
                 ),
-                range: Range {
-                    start: Position { line: line_number, character: start_char },
-                    end: Position { line: line_number, character: end_char },
-                },
+                range: method_range,
+            });
+        } else if path.is_empty() {
+            lints.push(Lint {
+                message: format!("`{token}` request is missing a path (e.g. `{token} /_search`)."),
+                range: method_range,
             });
         }
 
         // Collect the request's body: the consecutive lines after the request
         // line, up to a blank line or the next request line.
-        let path = rest[token_len..].trim_start();
         let body_start = i + 1;
         let mut body_end = body_start; // exclusive
         while body_end < lines.len() {
@@ -126,7 +135,7 @@ fn is_ndjson_path(path: &str) -> bool {
 }
 
 /// Cheap check used while scanning a body: does this line begin a new request?
-/// (Reuses the same shape rule as `is_request_line` but recomputes the token.)
+/// (Reuses the same rule as `is_request_candidate` but recomputes the token.)
 fn looks_like_request_line(line: &str) -> bool {
     let start_col = match line.find(|c: char| !c.is_whitespace()) {
         Some(col) => col,
@@ -135,7 +144,7 @@ fn looks_like_request_line(line: &str) -> bool {
     let rest = &line[start_col..];
     let token_len = rest.find(|c: char| c.is_whitespace()).unwrap_or(rest.len());
     let token = &rest[..token_len];
-    is_request_line(token, rest, token_len)
+    is_request_candidate(token)
 }
 
 /// Validate `body_lines` (the lines of a single request body) as one JSON value.
@@ -166,24 +175,15 @@ fn validate_json_body(body_lines: &[&str], body_start_line: u32) -> Option<Lint>
     }
 }
 
-/// Decide whether a line is an HTTP request line that should be method-checked.
+/// Decide whether a line's first token marks it as an HTTP request line.
 ///
-/// `token` is the first whitespace-delimited token, `rest` is the line from the
-/// first non-whitespace character onward, and `token_len` is the byte length of
-/// `token` within `rest`.
-///
-/// A request line looks like `WORD /path...`: the first token is one or more
-/// ASCII letters, and what follows (after the whitespace gap) begins with `/`.
-fn is_request_line(token: &str, rest: &str, token_len: usize) -> bool {
-    // First token must be one or more ASCII letters (e.g. GET, FOO, get).
-    if token.is_empty() || !token.chars().all(|c| c.is_ascii_alphabetic()) {
-        return false;
-    }
-
-    // After the token there must be whitespace, then a `/`-rooted path.
-    let after_token = &rest[token_len..];
-    let after_trimmed = after_token.trim_start();
-    after_trimmed.starts_with('/')
+/// A request line begins with the method: one or more ASCII letters (e.g. GET,
+/// FOO, get). We deliberately do NOT require a `/path` here — a method with no
+/// path is still a (broken) request, which the missing-path diagnostic reports.
+/// This still excludes JSON body lines (`{`, `"`, `}`), comments (`#`, `//`),
+/// and numbers, since none of those start with an all-letters token.
+fn is_request_candidate(token: &str) -> bool {
+    !token.is_empty() && token.chars().all(|c| c.is_ascii_alphabetic())
 }
 
 #[cfg(test)]
@@ -326,5 +326,78 @@ mod tests {
         assert_eq!(lints.len(), 2, "both bad methods should be flagged, got: {lints:?}");
         assert_eq!(lints[0].range.start.line, 0);
         assert_eq!(lints[1].range.start.line, 1);
+    }
+
+    // --- Missing path (Slice 4) -------------------------------------------
+
+    #[test]
+    fn flags_method_with_missing_path() {
+        // A valid method with no path is an incomplete request.
+        let doc = "GET";
+        let lints = analyze(doc);
+        assert_eq!(lints.len(), 1, "missing path should produce one lint, got: {lints:?}");
+        assert!(
+            lints[0].message.to_lowercase().contains("path"),
+            "message should mention the missing path, got: {}",
+            lints[0].message
+        );
+        // The squiggle covers the method token GET: line 0, characters 0..3.
+        assert_eq!(lints[0].range.start.line, 0);
+        assert_eq!(lints[0].range.start.character, 0);
+        assert_eq!(lints[0].range.end.character, 3);
+    }
+
+    #[test]
+    fn missing_path_with_trailing_whitespace_still_flagged() {
+        // `GET ` (trailing spaces, no path) is still a missing path.
+        let doc = "GET   ";
+        let lints = analyze(doc);
+        assert_eq!(lints.len(), 1, "missing path should be flagged, got: {lints:?}");
+        assert!(lints[0].message.to_lowercase().contains("path"));
+    }
+
+    #[test]
+    fn bad_method_takes_precedence_over_missing_path() {
+        // `FOO` is both an invalid method and missing a path. We report only the
+        // method error (one diagnostic per line, method wins).
+        let doc = "FOO";
+        let lints = analyze(doc);
+        assert_eq!(lints.len(), 1, "exactly one lint expected, got: {lints:?}");
+        assert!(
+            lints[0].message.contains("FOO") && lints[0].message.to_lowercase().contains("method"),
+            "the method error should win, got: {}",
+            lints[0].message
+        );
+    }
+
+    #[test]
+    fn accepts_method_with_path() {
+        // Sanity: a complete request line is still fine.
+        let doc = "GET /_search";
+        let lints = analyze(doc);
+        assert!(lints.is_empty(), "complete request should produce no lints");
+    }
+
+    #[test]
+    fn flags_missing_path_on_correct_line_in_multiline_doc() {
+        let doc = "GET /_search\n{}\n\nPOST";
+        let lints = analyze(doc);
+        assert_eq!(lints.len(), 1, "one missing-path lint expected, got: {lints:?}");
+        assert_eq!(lints[0].range.start.line, 3, "lint should be on line 3");
+        assert!(lints[0].message.to_lowercase().contains("path"));
+    }
+
+    #[test]
+    fn does_not_misread_body_lines_as_requests_after_broadening() {
+        // A valid body whose interior lines start with letters (a bare `true`
+        // and an unquoted-looking continuation) must be consumed as the body,
+        // not re-scanned as new request lines once request detection no longer
+        // requires a path.
+        let doc = "POST /_search\n{\n  \"a\": true,\n  \"b\": false\n}";
+        let lints = analyze(doc);
+        assert!(
+            lints.is_empty(),
+            "valid body with letter-led lines must not be flagged, got: {lints:?}"
+        );
     }
 }
