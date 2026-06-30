@@ -1,0 +1,89 @@
+# Regression safety for the co-located Zed extension and language server. Runs
+# on every pull request and on pushes to main:
+#   * extension  — compiles the WASM extension (src/lib.rs) for Zed's target.
+#   * server     — formats, lints, and tests the Rust language server.
+#   * manifest   — guards against a dev `file://` grammar URL leaking into a
+#                  release commit.
+#
+# The Tree-sitter grammar lives in a separate repository
+# (tree-sitter-elasticsearch); its `tree-sitter test` runs in that repo's own
+# CI, not here.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+# Cancel superseded runs on the same ref so a quick succession of pushes doesn't
+# pile up redundant builds.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  extension:
+    name: extension (wasm build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Zed loads extensions as WASM components; wasm32-wasip1 is the target the
+      # extension API compiles against.
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip1
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      # --locked fails if Cargo.lock is stale, keeping CI honest about the
+      # dependency set the extension actually builds with.
+      - name: Build extension
+        run: cargo build --locked --release --target wasm32-wasip1
+
+  server:
+    name: server (clippy, test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server
+
+      # -D warnings promotes every lint to an error so warnings can't accumulate.
+      - name: Clippy
+        working-directory: server
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      # Runs the unit tests and the LSP integration test (which spawns the
+      # compiled server over stdio).
+      - name: Test
+        working-directory: server
+        run: cargo test --locked
+
+  manifest:
+    name: manifest (no dev grammar URL)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The grammar URL must point at a published https:// revision in any
+      # committed state. A `file://` URL is a local dev convenience and must
+      # never reach main or a release tag.
+      - name: Reject file:// grammar URL in extension.toml
+        run: |
+          if grep -nE '^\s*repository\s*=\s*"file://' extension.toml; then
+            echo "::error file=extension.toml::extension.toml contains a file:// grammar URL; restore the https:// release URL before merging."
+            exit 1
+          fi
+          echo "extension.toml grammar URL is clean."
