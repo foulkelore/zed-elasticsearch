@@ -208,4 +208,4 @@ staying local, so instead:
 - [x] One-diagnostic-per-line precedence: bad method wins over missing path
 - [x] Guard: valid JSON body lines are not misread as requests
 - [x] `cargo test` all green (19); clippy clean
-- [ ] Visual QA in Zed: lone `GET` squiggles; complete request does not
+- [x] Visual QA in Zed: lone `GET` squiggles; complete request does not
