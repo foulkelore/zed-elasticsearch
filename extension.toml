@@ -1,6 +1,6 @@
 id = "elasticsearch"
 name = "Elasticsearch"
-version = "0.0.1"
+version = "0.1.0"
 schema_version = 1
 authors = ["Daryle Foulke <daryle.foulke@outlook.com>"]
 description = "Unofficial language support (highlighting + diagnostics) for Elasticsearch Console (.es) request files, like Kibana Dev Tools"
