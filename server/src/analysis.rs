@@ -5,9 +5,9 @@
 // and easy to unit-test in isolation; `main.rs` is responsible for turning
 // these `Lint`s into LSP diagnostics and sending them to the editor.
 
-/// A zero-based position in the document: which line, and which UTF-16-ish
-/// character offset within that line. We use zero-based to match LSP, which
-/// the transport layer expects.
+/// A zero-based position in the document: which line, and the UTF-16 code-unit
+/// offset within that line (`character`). Zero-based UTF-16 is exactly what LSP
+/// expects; see `utf16_len` for why the unit matters for non-ASCII text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Position {
     pub line: u32,
@@ -26,6 +26,32 @@ pub struct Range {
 pub struct Lint {
     pub message: String,
     pub range: Range,
+}
+
+/// Number of UTF-16 code units in `s`.
+///
+/// LSP `Position.character` is a UTF-16 code-unit offset — not a byte offset and
+/// not a Unicode scalar (char) count. Most characters are 1 unit, but anything
+/// outside the Basic Multilingual Plane (e.g. many emoji) is a surrogate pair =
+/// 2 units. `str::encode_utf16` yields exactly those units, so counting them
+/// gives the value the editor expects.
+fn utf16_len(s: &str) -> u32 {
+    s.encode_utf16().count() as u32
+}
+
+/// Convert a 0-based **byte** offset within `line` into a 0-based **UTF-16**
+/// column. Used to translate serde_json's byte-based error column (verified:
+/// it counts bytes) into the UTF-16 offset LSP wants.
+///
+/// Defensive about inputs we don't fully trust: the byte offset is clamped to
+/// the line length and walked back to the nearest char boundary so slicing
+/// never panics.
+fn byte_to_utf16_col(line: &str, byte_col: usize) -> u32 {
+    let mut boundary = byte_col.min(line.len());
+    while boundary > 0 && !line.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    utf16_len(&line[..boundary])
 }
 
 /// The HTTP methods Elasticsearch / Kibana Dev Tools accept on a request line.
@@ -57,8 +83,8 @@ pub fn analyze(text: &str) -> Vec<Lint> {
         let line_number = i as u32;
 
         // Find the first non-whitespace character and where it starts.
-        // `char_indices`/`find` give byte offsets; for now our inputs are ASCII
-        // so byte offset == character offset. We will revisit non-ASCII later.
+        // `find` gives a byte offset; we convert byte offsets to UTF-16 columns
+        // (what LSP wants) via `utf16_len` just before building the range below.
         let start_col = match line.find(|c: char| !c.is_whitespace()) {
             Some(col) => col,
             None => {
@@ -84,8 +110,10 @@ pub fn analyze(text: &str) -> Vec<Lint> {
 
         // The path is whatever follows the method token on the line.
         let path = rest[token_len..].trim_start();
-        let start_char = start_col as u32;
-        let end_char = (start_col + token_len) as u32;
+        // Byte offsets become UTF-16 columns for LSP. Both slice points are at
+        // char boundaries (a non-whitespace start, and a whitespace/EOL end).
+        let start_char = utf16_len(&line[..start_col]);
+        let end_char = utf16_len(&line[..start_col + token_len]);
         let method_range = Range {
             start: Position { line: line_number, character: start_char },
             end: Position { line: line_number, character: end_char },
@@ -191,10 +219,16 @@ fn validate_json_body(body_lines: &[&str], body_start_line: u32) -> Option<Lint>
     match serde_json::from_str::<serde_json::Value>(&body_text) {
         Ok(_) => None,
         Err(err) => {
-            // serde_json reports 1-based line and column within `body_text`.
-            // Convert to 0-based and offset by where the body starts.
+            // serde_json reports 1-based line and BYTE column within `body_text`.
+            // Convert to 0-based, translate the byte column to UTF-16 using the
+            // offending line's text, then offset by where the body starts.
             let err_line_in_body = err.line().saturating_sub(1) as u32;
-            let err_col = err.column().saturating_sub(1) as u32;
+            let byte_col = err.column().saturating_sub(1);
+            let err_line_text = body_lines
+                .get(err_line_in_body as usize)
+                .copied()
+                .unwrap_or("");
+            let err_col = byte_to_utf16_col(err_line_text, byte_col);
             let doc_line = body_start_line + err_line_in_body;
             Some(Lint {
                 message: format!("Invalid JSON in request body: {err}"),
@@ -488,6 +522,39 @@ mod tests {
             lints[0].range.start.character > 0,
             "error column should be within the line, got {}",
             lints[0].range.start.character
+        );
+    }
+
+    // --- UTF-16 position correctness (Slice 6) ----------------------------
+    // LSP `Position.character` is a UTF-16 code-unit offset, not a byte or char
+    // offset. serde_json reports byte columns, so a multibyte character before a
+    // JSON error must not push the squiggle to the right.
+
+    #[test]
+    fn body_error_column_is_utf16_for_two_byte_char() {
+        // `é` is 2 UTF-8 bytes but 1 UTF-16 unit. The error is at `?`. A
+        // byte-based column would report 8; the correct UTF-16 column is 7.
+        let doc = "POST /_doc\n{ \"é\": ? }";
+        let lints = analyze(doc);
+        assert_eq!(lints.len(), 1, "one malformed-body lint expected, got: {lints:?}");
+        assert_eq!(lints[0].range.start.line, 1);
+        assert_eq!(
+            lints[0].range.start.character, 7,
+            "character must be a UTF-16 offset (7), not a byte offset (8)"
+        );
+    }
+
+    #[test]
+    fn body_error_column_handles_surrogate_pair() {
+        // `𐐷` (U+10437) is 4 UTF-8 bytes and 2 UTF-16 units. The error is at `?`.
+        // A byte-based column would report 10; the correct UTF-16 column is 8.
+        let doc = "POST /_doc\n{ \"𐐷\": ? }";
+        let lints = analyze(doc);
+        assert_eq!(lints.len(), 1, "one malformed-body lint expected, got: {lints:?}");
+        assert_eq!(lints[0].range.start.line, 1);
+        assert_eq!(
+            lints[0].range.start.character, 8,
+            "a surrogate pair counts as 2 UTF-16 units; expected character 8"
         );
     }
 }
