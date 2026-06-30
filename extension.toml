@@ -3,7 +3,7 @@ name = "Elasticsearch"
 version = "0.0.1"
 schema_version = 1
 authors = ["Daryle Foulke <daryle.foulke@outlook.com>"]
-description = "Syntax highlighting and diagnostics for Elasticsearch Console (.es) request files"
+description = "Unofficial language support (highlighting + diagnostics) for Elasticsearch Console (.es) request files, like Kibana Dev Tools"
 repository = "https://github.com/foulkelore/zed-elasticsearch"
 
 [grammars.elasticsearch]
