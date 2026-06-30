@@ -186,8 +186,8 @@ staying local, so instead:
 
 ### Slice 2 — wire into Zed
 - [x] Server publishes diagnostics on didOpen/didChange
-- [ ] Extension crate: `Cargo.toml` + `src/lib.rs` (`language_server_command`)
-- [ ] `extension.toml`: `[language_servers.*]` entry
-- [ ] Build server; reinstall dev extension
-- [ ] Visual QA: squiggle on `FOO`, clears when fixed to `GET`
-- [ ] Commit (server + extension wiring); keep dev-only paths local
+- [x] Extension crate: `Cargo.toml` + `src/lib.rs` (`language_server_command`)
+- [x] `extension.toml`: `[language_servers.*]` entry
+- [x] Build server; reinstall dev extension
+- [x] Visual QA: squiggle on `FOO`, clears when fixed to `GET`
+- [x] Commit (server + extension wiring); keep dev-only paths local
