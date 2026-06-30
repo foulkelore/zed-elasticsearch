@@ -191,3 +191,12 @@ staying local, so instead:
 - [x] Build server; reinstall dev extension
 - [x] Visual QA: squiggle on `FOO`, clears when fixed to `GET`
 - [x] Commit (server + extension wiring); keep dev-only paths local
+
+### Slice 3 — malformed JSON body diagnostic (TDD)
+- [x] Tests: valid body, malformed body, no body, multi-line, bulk skip (RED)
+- [x] Add `serde_json` dependency (reuses version already in the tree)
+- [x] `analyze` collects each request's body and validates it as one JSON value
+- [x] Map serde_json error line/column to absolute document position
+- [x] Skip empty bodies and NDJSON endpoints (`_bulk`, `_msearch`)
+- [x] `cargo test` all green (13); clippy clean
+- [ ] Visual QA in Zed: malformed body squiggles; valid body / `_bulk` do not
