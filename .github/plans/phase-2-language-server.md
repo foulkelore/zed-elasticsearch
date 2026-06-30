@@ -209,3 +209,11 @@ staying local, so instead:
 - [x] Guard: valid JSON body lines are not misread as requests
 - [x] `cargo test` all green (19); clippy clean
 - [x] Visual QA in Zed: lone `GET` squiggles; complete request does not
+
+### Slice 5 — per-line bulk / msearch validation (TDD)
+- [x] Tests: valid bulk passes, one/many bad lines, msearch, column offset (RED)
+- [x] `validate_ndjson_body` validates each non-blank body line independently
+- [x] One diagnostic per malformed line, mapped to its document line
+- [x] Option A only (no action/source pairing semantics yet)
+- [x] `cargo test` all green (23); clippy clean
+- [ ] Visual QA in Zed: malformed bulk line squiggles; valid bulk does not
